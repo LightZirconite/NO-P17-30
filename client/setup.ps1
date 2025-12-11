@@ -72,6 +72,24 @@ while ($true) {
         
         $Response = Invoke-RestMethod -Uri $UriString -Method Get -TimeoutSec 5 -ErrorAction Stop
         
+        # --- FIX: Gestion robuste de la réponse ---
+        # Si le serveur renvoie une chaîne (ex: mauvais Content-Type), on tente de parser
+        if ($Response -is [string]) {
+            try {
+                $Response = $Response | ConvertFrom-Json
+            } catch {
+                Write-Log "ERREUR: Réponse non-JSON reçue (Longeur: $($Response.Length))"
+                continue
+            }
+        }
+
+        # Vérification que l'objet contient bien le status
+        if ($null -eq $Response -or $null -eq $Response.status) {
+            Write-Log "ERREUR: Réponse invalide ou champ 'status' manquant."
+            continue
+        }
+        # ------------------------------------------
+
         # Log changement d'état global
         if ($Response.status -ne $LastStatus) {
             Write-Log "État Serveur: $LastStatus -> $($Response.status)"
