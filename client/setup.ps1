@@ -81,6 +81,12 @@ while ($true) {
             if ($CleanResponse.StartsWith([char]0xFEFF)) { $CleanResponse = $CleanResponse.Substring(1) }
             $CleanResponse = $CleanResponse.Trim()
 
+            # Fix: Si les accolades manquent (JSON corrompu côté serveur), on les rajoute
+            if ($CleanResponse -match '^"status"' -and $CleanResponse -notmatch '^\{') {
+                $CleanResponse = "{" + $CleanResponse + "}"
+                Write-Log "AVERTISSEMENT: Accolades manquantes ajoutées automatiquement."
+            }
+
             try {
                 $Response = $CleanResponse | ConvertFrom-Json
             } catch {
