@@ -20,6 +20,9 @@ $PlayerScriptContent = @'
 
 $ErrorActionPreference = "SilentlyContinue"
 
+# Force TLS 1.2 (Fix pour vieux Windows/PowerShell)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 # --- SINGLE INSTANCE CHECK ---
 $MutexName = "Global\LGTWPlayerMutex"
 try {
@@ -32,6 +35,7 @@ try {
 
 # --- CONFIGURATION ---
 $RemoteUrl = "https://lgtw.tf/nop/server/control.php"
+
 $LocalSoundPath = "$env:APPDATA\LGTWPlayer\lycee-sonnerie.wav"
 $LogFile = "$env:APPDATA\LGTWPlayer\activity.log"
 
@@ -44,52 +48,36 @@ function Write-Log ($Message) {
     Write-Host $Line
 }
 
-function Set-Volume ($Percent) {
-    try {
-        $WshShell = New-Object -ComObject WScript.Shell
-        1..50 | ForEach-Object { $WshShell.SendKeys([char]174) } # VolDown
-        $Steps = [math]::Ceiling($Percent / 2)
-        if ($Steps -gt 0) {
-            1..$Steps | ForEach-Object { $WshShell.SendKeys([char]175) } # VolUp
-        }
-    } catch {
-        Write-Log "Erreur volume: $_"
-    }
-}
-
-function Play-Sound {
-    param($Path)
-    if (Test-Path $Path) {
-        try {
-            $Player = New-Object System.Media.SoundPlayer
-            $Player.SoundLocation = $Path
-            $Player.Load()
-            $Player.Play()
-            Write-Log "SON JOUÉ !"
-        } catch {
-            Write-Log "ERREUR LECTURE: $_"
-            [console]::Beep(880, 1000)
-        }
-    } else {
-        Write-Log "Fichier son introuvable: $Path"
-        [console]::Beep(880, 1000)
-    }
-}
-
-# --- BOUCLE PRINCIPALE ---
-
 Write-Log "--- PLAYER DEMARRÉ (SMART SYNC) ---"
+Write-Log "DEBUG: URL Configurée = '$RemoteUrl'"
+
+# Validation initiale
+try {
+    $TestUri = [Uri]$RemoteUrl
+    Write-Log "DEBUG: URI Valide. Host: $($TestUri.Host)"
+} catch {
+    Write-Log "ERREUR CRITIQUE: L'URL '$RemoteUrl' est invalide !"
+}
 
 $LastTarget = 0
 $HasPlayedForTarget = $false
 $LastVolume = -1
+$LastStatus = ""
 
 while ($true) {
     try {
         $Time = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
-        $Uri = "$RemoteUrl?t=$Time"
-        $Response = Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 5 -ErrorAction Stop
+        # Construction explicite de l'URI pour éviter les erreurs de parsing
+        $UriString = "{0}?t={1}" -f $RemoteUrl, $Time
         
+        $Response = Invoke-RestMethod -Uri $UriString -Method Get -TimeoutSec 5 -ErrorAction Stop
+        
+        # Log changement d'état global
+        if ($Response.status -ne $LastStatus) {
+            Write-Log "État Serveur: $LastStatus -> $($Response.status)"
+            $LastStatus = $Response.status
+        }
+
         if ($null -ne $Response.volume) {
             $Vol = [int]$Response.volume
             if ($Vol -ne $LastVolume) {
@@ -135,7 +123,11 @@ while ($true) {
             Start-Sleep -Seconds 1
         }
     } catch {
-        Write-Host "." -NoNewline
+        Write-Host "!" -NoNewline -ForegroundColor Red
+        $Msg = $_.Exception.Message
+        if ($Msg -notlike "*timed out*") {
+            Write-Log "ERREUR: $Msg"
+        }
         Start-Sleep -Seconds 2
     }
 }
