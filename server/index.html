@@ -1,183 +1,386 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="fr">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LGTW Control Center</title>
+    <title>LGTW Control Center V2</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-color: #0a0a0a;
+            --card-bg: #161616;
+            --text-primary: #ffffff;
+            --text-secondary: #888888;
+            --accent-color: #00f2ff;
+            --danger-color: #ff2a6d;
+            --success-color: #05d5fa;
+            --warning-color: #ffb86c;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #121212;
-            color: #e0e0e0;
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
-            margin: 0;
+            min-height: 100vh;
+            overflow: hidden;
         }
 
-        .container {
-            background-color: #1e1e1e;
-            padding: 40px;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-            text-align: center;
-            width: 350px;
+        .dashboard {
+            background-color: var(--card-bg);
+            width: 90%;
+            max-width: 450px;
+            border-radius: 24px;
+            padding: 30px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
             border: 1px solid #333;
+            position: relative;
+            overflow: hidden;
         }
 
-        h1 {
+        /* Header & Time */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 30px;
-            font-weight: 300;
+            border-bottom: 1px solid #333;
+            padding-bottom: 15px;
+        }
+
+        .brand {
+            font-weight: 800;
+            letter-spacing: -1px;
+            font-size: 1.2rem;
+        }
+        .brand span { color: var(--accent-color); }
+
+        .server-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        /* Status Display */
+        .status-display {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #0f0f0f;
+            border-radius: 16px;
+            border: 1px solid #222;
+        }
+
+        .status-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
             letter-spacing: 2px;
-            color: #fff;
-        }
-
-        .control-group {
-            margin-bottom: 25px;
-        }
-
-        label {
-            display: block;
+            color: var(--text-secondary);
             margin-bottom: 10px;
-            color: #aaa;
         }
 
-        input[type=range] {
-            width: 100%;
-            accent-color: #bb86fc;
+        .status-value {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: var(--text-primary);
+            text-shadow: 0 0 20px rgba(255,255,255,0.1);
         }
 
-        button {
-            width: 100%;
+        .status-value.armed { color: var(--accent-color); text-shadow: 0 0 20px rgba(0, 242, 255, 0.4); }
+        .status-value.idle { color: var(--text-secondary); }
+
+        /* Countdown */
+        .countdown-container {
+            text-align: center;
+            height: 60px;
+            margin-bottom: 20px;
+        }
+        .countdown {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--warning-color);
+            display: none;
+        }
+        .countdown.active { display: block; }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: #222;
             padding: 15px;
-            font-size: 16px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: transform 0.1s, opacity 0.2s;
-            font-weight: bold;
-            margin-bottom: 15px;
+            border-radius: 12px;
         }
-
-        button:active {
-            transform: scale(0.98);
+        .volume-control label { font-size: 0.9rem; color: var(--text-secondary); width: 60px; }
+        input[type=range] {
+            flex: 1;
+            height: 6px;
+            background: #444;
+            border-radius: 3px;
+            outline: none;
+            -webkit-appearance: none;
         }
-
-        .btn-go {
-            background: linear-gradient(45deg, #6200ea, #bb86fc);
-            color: white;
-            box-shadow: 0 4px 15px rgba(98, 0, 234, 0.4);
-        }
-
-        .btn-stop {
-            background-color: #cf6679;
-            color: #121212;
-        }
-
-        #status {
-            margin-top: 20px;
-            padding: 10px;
-            border-radius: 5px;
-            background-color: #2c2c2c;
-            font-family: monospace;
-            min-height: 20px;
-        }
-
-        /* Loader Animation */
-        .loader {
-            border: 3px solid #2c2c2c;
-            border-top: 3px solid #bb86fc;
-            border-radius: 50%;
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
             width: 20px;
             height: 20px;
-            animation: spin 1s linear infinite;
-            display: inline-block;
-            vertical-align: middle;
-            margin-right: 10px;
-            visibility: hidden;
+            background: var(--accent-color);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 242, 255, 0.5);
         }
 
-        @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
+        /* Buttons */
+        .btn {
+            width: 100%;
+            padding: 20px;
+            border: none;
+            border-radius: 16px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
         }
 
-        .visible {
-            visibility: visible;
+        .btn:active { transform: scale(0.98); }
+
+        .btn-arm {
+            background: linear-gradient(135deg, #0061ff, #60efff);
+            color: #000;
+            box-shadow: 0 10px 30px rgba(0, 97, 255, 0.3);
         }
+        .btn-arm:hover { filter: brightness(1.1); }
+
+        .btn-stop {
+            background: #1a1a1a;
+            color: var(--danger-color);
+            border: 2px solid var(--danger-color);
+            margin-top: 10px;
+        }
+        .btn-stop:hover { background: var(--danger-color); color: white; }
+
+        /* Safety Overlay */
+        .safety-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            backdrop-filter: blur(5px);
+        }
+        .safety-overlay.visible { opacity: 1; pointer-events: all; }
+        
+        .confirm-box {
+            background: #222;
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+            border: 1px solid #444;
+        }
+        .confirm-box h3 { margin-bottom: 20px; color: white; }
+        .confirm-actions { display: flex; gap: 10px; }
+        .btn-confirm { background: var(--success-color); color: black; padding: 15px 30px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; }
+        .btn-cancel { background: transparent; color: #888; padding: 15px 30px; border: 1px solid #444; border-radius: 10px; cursor: pointer; }
+
+        /* Logs */
+        .logs {
+            margin-top: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: #555;
+            text-align: center;
+            height: 20px;
+        }
+
     </style>
 </head>
-
 <body>
 
-    <div class="container">
-        <h1>LGTW COMMAND</h1>
-
-        <div class="control-group">
-            <label for="volume">Volume Cible: <span id="vol-val">50</span>%</label>
-            <input type="range" id="volume" min="0" max="100" value="50"
-                oninput="document.getElementById('vol-val').innerText = this.value">
+    <div class="dashboard">
+        <div class="header">
+            <div class="brand">LGTW <span>SYNC</span></div>
+            <div class="server-time" id="serverTime">--:--:--</div>
         </div>
 
-        <button class="btn-go" onclick="sendCommand('start')">
-            <div id="loader" class="loader"></div> INITIALISER (15s)
-        </button>
+        <div class="status-display">
+            <div class="status-label">ÉTAT DU SYSTÈME</div>
+            <div class="status-value idle" id="statusText">EN ATTENTE</div>
+        </div>
 
-        <button class="btn-stop" onclick="sendCommand('stop')">ARRÊT D'URGENCE</button>
+        <div class="countdown-container">
+            <div id="countdown" class="countdown">00.0</div>
+        </div>
 
-        <div id="status">Système prêt.</div>
+        <div class="controls">
+            <div class="volume-control">
+                <label>VOL</label>
+                <input type="range" id="volumeSlider" min="0" max="100" value="50">
+                <label id="volumeValue" style="width: 30px; text-align: right;">50</label>
+            </div>
+
+            <button class="btn btn-arm" onclick="showConfirm()">LANCER SÉQUENCE (15s)</button>
+            <button class="btn btn-stop" onclick="sendAction('stop')">ARRÊT D'URGENCE</button>
+        </div>
+
+        <div class="logs" id="logs">Prêt.</div>
+
+        <!-- Safety Confirmation -->
+        <div class="safety-overlay" id="safetyOverlay">
+            <div class="confirm-box">
+                <h3>CONFIRMER LE LANCEMENT ?</h3>
+                <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Tous les postes sonneront dans 15s.</p>
+                <div class="confirm-actions">
+                    <button class="btn-cancel" onclick="hideConfirm()">Annuler</button>
+                    <button class="btn-confirm" onclick="confirmLaunch()">CONFIRMER</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
-        function sendCommand(action) {
-            const loader = document.getElementById('loader');
-            const statusDiv = document.getElementById('status');
-            const volume = document.getElementById('volume').value;
+        // State
+        let serverOffset = 0;
+        let isArmed = false;
+        let targetTimestamp = 0;
+        let pollingInterval = null;
 
-            loader.classList.add('visible');
-            statusDiv.innerText = "Transmission...";
+        // Elements
+        const els = {
+            status: document.getElementById('statusText'),
+            time: document.getElementById('serverTime'),
+            countdown: document.getElementById('countdown'),
+            logs: document.getElementById('logs'),
+            overlay: document.getElementById('safetyOverlay'),
+            volSlider: document.getElementById('volumeSlider'),
+            volValue: document.getElementById('volumeValue')
+        };
 
-            // Ajout de Date.now() pour éviter le cache navigateur
-            let url = 'control.php?action=' + action + '&t=' + Date.now();
-            if (action === 'start') {
-                url += '&volume=' + volume;
+        // Volume UI
+        els.volSlider.addEventListener('input', (e) => {
+            els.volValue.innerText = e.target.value;
+        });
+        // Send volume on change (if armed, it updates live)
+        els.volSlider.addEventListener('change', (e) => {
+            if(isArmed) {
+                // If armed, we re-send start command to update volume without changing timer
+                // Actually, the PHP script resets timer if we call start again.
+                // Let's just log it for now, or we'd need a specific 'update_volume' endpoint.
+                // For this version, we just set it for the NEXT launch.
+                log("Volume défini pour le prochain lancement.");
             }
+        });
+
+        function log(msg) {
+            els.logs.innerText = msg;
+            setTimeout(() => els.logs.innerText = "", 3000);
+        }
+
+        function showConfirm() { els.overlay.classList.add('visible'); }
+        function hideConfirm() { els.overlay.classList.remove('visible'); }
+
+        function confirmLaunch() {
+            hideConfirm();
+            sendAction('start', els.volSlider.value);
+        }
+
+        function sendAction(action, volume = 50) {
+            let url = `control.php?action=${action}&t=${Date.now()}`;
+            if (action === 'start') url += `&volume=${volume}`;
 
             fetch(url)
-                .then(response => response.json())
+                .then(res => res.json())
                 .then(data => {
-                    setTimeout(() => { // Fake delay for "style"
-                        loader.classList.remove('visible');
-
-                        if (data.status === 'ERROR') {
-                            statusDiv.innerText = "ERREUR: " + data.message;
-                            statusDiv.style.color = "red";
-                        }
-                        else if (data.status === 'ARMED') {
-                            statusDiv.innerText = "ARMÉ - T-" + (data.target_timestamp - Math.floor(Date.now() / 1000)) + "s - Vol:" + data.volume + "%";
-                            statusDiv.style.color = "#bb86fc";
-                        } else {
-                            statusDiv.innerText = "SYSTÈME DÉSARMÉ";
-                            statusDiv.style.color = "#cf6679";
-                        }
-                    }, 500);
+                    updateState(data);
+                    log(action === 'start' ? "Séquence initiée." : "Arrêt d'urgence envoyé.");
                 })
-                .catch(err => {
-                    loader.classList.remove('visible');
-                    statusDiv.innerText = "ERREUR DE LIAISON";
-                    statusDiv.style.color = "red";
-                    console.error(err);
-                });
+                .catch(err => log("Erreur communication serveur"));
         }
+
+        function updateState(data) {
+            // Sync Time
+            if (data.server_time) {
+                // Calculate offset: ServerTime - LocalTime
+                // We use this to estimate current server time locally
+                const now = Math.floor(Date.now() / 1000);
+                serverOffset = data.server_time - now;
+            }
+
+            // Status
+            if (data.status === 'ARMED') {
+                isArmed = true;
+                targetTimestamp = data.target_timestamp;
+                els.status.innerText = "SÉQUENCE ARMÉE";
+                els.status.classList.add('armed');
+                els.status.classList.remove('idle');
+                els.countdown.classList.add('active');
+            } else {
+                isArmed = false;
+                els.status.innerText = "EN ATTENTE";
+                els.status.classList.remove('armed');
+                els.status.classList.add('idle');
+                els.countdown.classList.remove('active');
+            }
+        }
+
+        function tick() {
+            const now = Math.floor(Date.now() / 1000);
+            const estimatedServerTime = now + serverOffset;
+
+            // Update Clock
+            const date = new Date(estimatedServerTime * 1000);
+            els.time.innerText = date.toLocaleTimeString('fr-FR');
+
+            // Update Countdown
+            if (isArmed) {
+                const diff = targetTimestamp - estimatedServerTime;
+                if (diff > 0) {
+                    els.countdown.innerText = diff.toFixed(0) + "s";
+                    els.countdown.style.color = "#ffb86c"; // Orange
+                } else if (diff > -5) {
+                    els.countdown.innerText = "SONNERIE";
+                    els.countdown.style.color = "#05d5fa"; // Cyan
+                } else {
+                    // Should have been reset by server, but just in case
+                    els.countdown.innerText = "TERMINÉ";
+                }
+            }
+        }
+
+        function poll() {
+            fetch(`control.php?t=${Date.now()}`)
+                .then(res => res.json())
+                .then(data => updateState(data))
+                .catch(e => console.error(e));
+        }
+
+        // Init
+        setInterval(tick, 100); // Fast UI updates
+        setInterval(poll, 1000); // Server sync every 1s
+        poll(); // First check
+
     </script>
 </body>
-
 </html>
