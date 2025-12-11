@@ -76,22 +76,17 @@ while ($true) {
         # Si le serveur renvoie une chaîne (ex: mauvais Content-Type), on tente de parser
         if ($Response -is [string]) {
             # Nettoyage du BOM (ï»¿) causé par l'encodage du fichier PHP
-            if ($Response.StartsWith("ï»¿")) { $Response = $Response.Substring(3) }
-            if ($Response.StartsWith([char]0xFEFF)) { $Response = $Response.Substring(1) }
-
-            # Détection JSON corrompu (manque accolade ouvrante)
-            if ($Response -match '^"status"') {
-                Write-Log "ERREUR CRITIQUE: Le fichier state.json sur le serveur est corrompu. Contactez l'admin."
-                Start-Sleep -Seconds 5
-                continue
-            }
+            $CleanResponse = $Response
+            if ($CleanResponse.StartsWith("ï»¿")) { $CleanResponse = $CleanResponse.Substring(3) }
+            if ($CleanResponse.StartsWith([char]0xFEFF)) { $CleanResponse = $CleanResponse.Substring(1) }
+            $CleanResponse = $CleanResponse.Trim()
 
             try {
-                $Response = $Response | ConvertFrom-Json
+                $Response = $CleanResponse | ConvertFrom-Json
             } catch {
-                $Preview = $Response
-                if ($Preview.Length -gt 50) { $Preview = $Preview.Substring(0, 50) + "..." }
-                Write-Log "ERREUR: Réponse non-JSON reçue (Longeur: $($Response.Length)). Contenu: '$Preview'"
+                $Preview = $CleanResponse
+                if ($Preview.Length -gt 80) { $Preview = $Preview.Substring(0, 80) + "..." }
+                Write-Log "ERREUR: Impossible de parser le JSON. Contenu: '$Preview'"
                 Start-Sleep -Seconds 2
                 continue
             }
@@ -100,6 +95,7 @@ while ($true) {
         # Vérification que l'objet contient bien le status
         if ($null -eq $Response -or $null -eq $Response.status) {
             Write-Log "ERREUR: Réponse invalide ou champ 'status' manquant."
+            Start-Sleep -Seconds 2
             continue
         }
         # ------------------------------------------
