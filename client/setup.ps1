@@ -138,7 +138,7 @@ while ($true) {
         # Construction explicite de l'URI pour éviter les erreurs de parsing
         $UriString = "{0}?t={1}" -f $RemoteUrl, $Time
         
-        $WebResponse = Invoke-WebRequest -Uri $UriString -Method Get -TimeoutSec 5 -ErrorAction Stop
+        $WebResponse = Invoke-WebRequest -Uri $UriString -Method Get -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
         $CleanContent = $WebResponse.Content.Trim()
         
         # Remove BOM if present (UTF-8: EF BB BF, UTF-16: FE FF)
@@ -209,7 +209,7 @@ while ($true) {
                 if ($NewSoundFile -match '^https?://') {
                     try {
                         Write-Log "Downloading sound file..."
-                        Invoke-WebRequest -Uri $NewSoundFile -OutFile $LocalSoundPath -TimeoutSec 30
+                        Invoke-WebRequest -Uri $NewSoundFile -OutFile $LocalSoundPath -TimeoutSec 30 -UseBasicParsing
                         Write-Log "Sound file downloaded successfully"
                     } catch {
                         Write-Log "ERROR: Failed to download sound - $($_.Exception.Message)"
@@ -243,7 +243,7 @@ while ($true) {
                 # Quick status re-check for emergency stop
                 if ($SecondsRemaining -gt 2) {
                     try {
-                        $QuickCheck = Invoke-WebRequest -Uri "$RemoteUrl?t=$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())" -TimeoutSec 2 -ErrorAction Stop
+                        $QuickCheck = Invoke-WebRequest -Uri "$RemoteUrl?t=$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
                         $QuickJson = $QuickCheck.Content.Trim()
                         if ($QuickJson -match '^"status"' -and $QuickJson -notmatch '^\{') { $QuickJson = "{" + $QuickJson }
                         $QuickStatus = ($QuickJson | ConvertFrom-Json).status
