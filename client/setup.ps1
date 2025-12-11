@@ -80,35 +80,29 @@ while ($true) {
         # Construction explicite de l'URI pour éviter les erreurs de parsing
         $UriString = "{0}?t={1}" -f $RemoteUrl, $Time
         
-        # Use WebRequest instead to get raw response for better debugging
         $WebResponse = Invoke-WebRequest -Uri $UriString -Method Get -TimeoutSec 5 -ErrorAction Stop
-        $RawContent = $WebResponse.Content
+        $CleanContent = $WebResponse.Content.Trim()
         
-        # --- ROBUST JSON PARSING ---
-        # Clean BOM and whitespace
-        $CleanContent = $RawContent.Trim()
-        
-        # Remove UTF-8 BOM if present
-        if ($CleanContent.Length -ge 3 -and $CleanContent[0] -eq 0xEF -and $CleanContent[1] -eq 0xBB -and $CleanContent[2] -eq 0xBF) {
-            $CleanContent = $CleanContent.Substring(3).Trim()
-        }
-        if ($CleanContent.StartsWith([char]0xFEFF)) {
-            $CleanContent = $CleanContent.Substring(1).Trim()
+        # Remove BOM if present (UTF-8: EF BB BF, UTF-16: FE FF)
+        if ($CleanContent.StartsWith([char]0xFEFF) -or $CleanContent.StartsWith("ï»¿")) {
+            $CleanContent = $CleanContent.TrimStart([char]0xFEFF).TrimStart("ï»¿").Trim()
         }
         
-        # Validate JSON structure before parsing
-        if ($CleanContent -notmatch '^\s*\{' -or $CleanContent -notmatch '\}\s*$') {
-            $Preview = if ($CleanContent.Length -gt 100) { $CleanContent.Substring(0, 100) + "..." } else { $CleanContent }
-            Write-Log "ERROR: Invalid JSON structure. Content: '$Preview'"
-            Start-Sleep -Seconds 2
-            continue
+        # Auto-fix: Add missing opening brace if needed
+        if ($CleanContent -match '^"status"' -and $CleanContent -notmatch '^\{') {
+            $CleanContent = "{" + $CleanContent
+        }
+        
+        # Auto-fix: Add missing closing brace if needed
+        if ($CleanContent -match '"[^"]*"$' -and $CleanContent -notmatch '\}$') {
+            $CleanContent = $CleanContent + "}"
         }
         
         try {
             $Response = $CleanContent | ConvertFrom-Json
         } catch {
             $Preview = if ($CleanContent.Length -gt 100) { $CleanContent.Substring(0, 100) + "..." } else { $CleanContent }
-            Write-Log "ERROR: JSON parse failed. Content: '$Preview' | Error: $($_.Exception.Message)"
+            Write-Log "ERROR: JSON parse failed. Content: '$Preview'"
             Start-Sleep -Seconds 2
             continue
         }
