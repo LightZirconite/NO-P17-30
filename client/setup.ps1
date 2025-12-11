@@ -79,6 +79,13 @@ while ($true) {
             if ($Response.StartsWith("ï»¿")) { $Response = $Response.Substring(3) }
             if ($Response.StartsWith([char]0xFEFF)) { $Response = $Response.Substring(1) }
 
+            # Détection JSON corrompu (manque accolade ouvrante)
+            if ($Response -match '^"status"') {
+                Write-Log "ERREUR CRITIQUE: Le fichier state.json sur le serveur est corrompu. Contactez l'admin."
+                Start-Sleep -Seconds 5
+                continue
+            }
+
             try {
                 $Response = $Response | ConvertFrom-Json
             } catch {

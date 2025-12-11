@@ -80,8 +80,11 @@ if ($action === 'start') {
     $content = file_get_contents($stateFile);
     $data = json_decode($content, true);
     
-    if (!$data) {
-        $data = ['status' => 'IDLE'];
+    // Si le JSON est corrompu ou invalide, on le recrée
+    if (!$data || !isset($data['status'])) {
+        logDebug("AVERTISSEMENT: state.json corrompu, recréation...");
+        $data = ['status' => 'IDLE', 'target_timestamp' => 0, 'message' => 'Reset après corruption'];
+        file_put_contents($stateFile, json_encode($data));
     }
 
     // Si c'est ARMÉ mais que l'heure est passée depuis plus de 5 secondes
