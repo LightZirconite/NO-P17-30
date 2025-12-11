@@ -48,8 +48,18 @@ function Write-Log ($Message) {
     Write-Host $Line
 }
 
-Write-Log "--- PLAYER DEMARRÉ (SMART SYNC) ---"
-Write-Log "DEBUG: URL Configurée = '$RemoteUrl'"
+function Set-Volume ($Percent) {
+    try {
+        $Audio = New-Object -ComObject WScript.Shell
+        # Note: Volume control requires additional COM objects or external tools
+        # Simplified implementation - does nothing on systems without proper audio COM
+    } catch {
+        # Silent fail - volume control is optional
+    }
+}
+
+Write-Log "--- PLAYER STARTED (SMART SYNC) ---"
+Write-Log "DEBUG: Configured URL = '$RemoteUrl'"
 
 # Validation initiale
 try {
@@ -70,41 +80,45 @@ while ($true) {
         # Construction explicite de l'URI pour éviter les erreurs de parsing
         $UriString = "{0}?t={1}" -f $RemoteUrl, $Time
         
-        $Response = Invoke-RestMethod -Uri $UriString -Method Get -TimeoutSec 5 -ErrorAction Stop
+        # Use WebRequest instead to get raw response for better debugging
+        $WebResponse = Invoke-WebRequest -Uri $UriString -Method Get -TimeoutSec 5 -ErrorAction Stop
+        $RawContent = $WebResponse.Content
         
-        # --- FIX: Gestion robuste de la réponse ---
-        # Si le serveur renvoie une chaîne (ex: mauvais Content-Type), on tente de parser
-        if ($Response -is [string]) {
-            # Nettoyage du BOM (ï»¿) causé par l'encodage du fichier PHP
-            $CleanResponse = $Response
-            if ($CleanResponse.StartsWith("ï»¿")) { $CleanResponse = $CleanResponse.Substring(3) }
-            if ($CleanResponse.StartsWith([char]0xFEFF)) { $CleanResponse = $CleanResponse.Substring(1) }
-            $CleanResponse = $CleanResponse.Trim()
-
-            # Fix: Si les accolades manquent (JSON corrompu côté serveur), on les rajoute
-            if ($CleanResponse -match '^"status"' -and $CleanResponse -notmatch '^\{') {
-                $CleanResponse = "{" + $CleanResponse + "}"
-                Write-Log "AVERTISSEMENT: Accolades manquantes ajoutées automatiquement."
-            }
-
-            try {
-                $Response = $CleanResponse | ConvertFrom-Json
-            } catch {
-                $Preview = $CleanResponse
-                if ($Preview.Length -gt 80) { $Preview = $Preview.Substring(0, 80) + "..." }
-                Write-Log "ERREUR: Impossible de parser le JSON. Contenu: '$Preview'"
-                Start-Sleep -Seconds 2
-                continue
-            }
+        # --- ROBUST JSON PARSING ---
+        # Clean BOM and whitespace
+        $CleanContent = $RawContent.Trim()
+        
+        # Remove UTF-8 BOM if present
+        if ($CleanContent.Length -ge 3 -and $CleanContent[0] -eq 0xEF -and $CleanContent[1] -eq 0xBB -and $CleanContent[2] -eq 0xBF) {
+            $CleanContent = $CleanContent.Substring(3).Trim()
         }
-
-        # Vérification que l'objet contient bien le status
-        if ($null -eq $Response -or $null -eq $Response.status) {
-            Write-Log "ERREUR: Réponse invalide ou champ 'status' manquant."
+        if ($CleanContent.StartsWith([char]0xFEFF)) {
+            $CleanContent = $CleanContent.Substring(1).Trim()
+        }
+        
+        # Validate JSON structure before parsing
+        if ($CleanContent -notmatch '^\s*\{' -or $CleanContent -notmatch '\}\s*$') {
+            $Preview = if ($CleanContent.Length -gt 100) { $CleanContent.Substring(0, 100) + "..." } else { $CleanContent }
+            Write-Log "ERROR: Invalid JSON structure. Content: '$Preview'"
             Start-Sleep -Seconds 2
             continue
         }
-        # ------------------------------------------
+        
+        try {
+            $Response = $CleanContent | ConvertFrom-Json
+        } catch {
+            $Preview = if ($CleanContent.Length -gt 100) { $CleanContent.Substring(0, 100) + "..." } else { $CleanContent }
+            Write-Log "ERROR: JSON parse failed. Content: '$Preview' | Error: $($_.Exception.Message)"
+            Start-Sleep -Seconds 2
+            continue
+        }
+
+        # Validate response structure
+        if ($null -eq $Response -or $null -eq $Response.status) {
+            Write-Log "ERROR: Invalid response or missing 'status' field."
+            Start-Sleep -Seconds 2
+            continue
+        }
 
         # Log changement d'état global
         if ($Response.status -ne $LastStatus) {
@@ -133,24 +147,40 @@ while ($true) {
             $SecondsRemaining = $TargetTime - $ServerTime
 
             if ($SecondsRemaining -gt 0) {
-                Write-Host "Attente... T-$SecondsRemaining s" -NoNewline -ForegroundColor Yellow
+                Write-Host "Waiting... T-$SecondsRemaining s" -NoNewline -ForegroundColor Yellow
                 Write-Host "`r" -NoNewline
                 if ($SecondsRemaining -lt 2) { Start-Sleep -Milliseconds 200 } else { Start-Sleep -Seconds 1 }
             } else {
                 if (-not $HasPlayedForTarget) {
                     if ($SecondsRemaining -gt -30) {
-                        Write-Log ">>> EXECUTION SYNCHRONISÉE (Delta: $SecondsRemaining s) <<<"
-                        Play-Sound -Path $LocalSoundPath
+                        Write-Log ">>> SYNCHRONIZED EXECUTION (Delta: $SecondsRemaining s) <<<"
+                        
+                        # Play sound using .NET Media Player
+                        if (Test-Path $LocalSoundPath) {
+                            try {
+                                $Player = New-Object System.Media.SoundPlayer
+                                $Player.SoundLocation = $LocalSoundPath
+                                $Player.PlaySync()
+                                $Player.Dispose()
+                            } catch {
+                                Write-Log "ERROR: Failed to play sound - $($_.Exception.Message)"
+                                [Console]::Beep(800, 500)
+                            }
+                        } else {
+                            Write-Log "WARNING: Sound file not found at $LocalSoundPath"
+                            [Console]::Beep(800, 500)
+                        }
+                        
                         $HasPlayedForTarget = $true
                     } else {
-                        Write-Log "Cible ignorée car trop ancienne ($SecondsRemaining s)"
+                        Write-Log "Target ignored - too old ($SecondsRemaining s)"
                         $HasPlayedForTarget = $true
                     }
                 }
             }
         } else {
             if ($LastTarget -ne 0) {
-                Write-Log "Serveur en attente (IDLE)."
+                Write-Log "Server waiting (IDLE)."
                 $LastTarget = 0
                 $HasPlayedForTarget = $false
             }
@@ -160,7 +190,7 @@ while ($true) {
         Write-Host "!" -NoNewline -ForegroundColor Red
         $Msg = $_.Exception.Message
         if ($Msg -notlike "*timed out*") {
-            Write-Log "ERREUR: $Msg"
+            Write-Log "ERROR: $Msg"
         }
         Start-Sleep -Seconds 2
     }
