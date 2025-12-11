@@ -102,4 +102,4 @@ if ($action === 'start') {
     $data['server_time'] = time();
     echo json_encode($data);
 }
-?>
+

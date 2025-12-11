@@ -78,7 +78,10 @@ while ($true) {
             try {
                 $Response = $Response | ConvertFrom-Json
             } catch {
-                Write-Log "ERREUR: Réponse non-JSON reçue (Longeur: $($Response.Length))"
+                $Preview = $Response
+                if ($Preview.Length -gt 50) { $Preview = $Preview.Substring(0, 50) + "..." }
+                Write-Log "ERREUR: Réponse non-JSON reçue (Longeur: $($Response.Length)). Contenu: '$Preview'"
+                Start-Sleep -Seconds 2
                 continue
             }
         }
