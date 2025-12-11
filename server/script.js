@@ -55,10 +55,18 @@ function sendAction(action, volume = 50) {
     fetch(url)
         .then(res => res.json())
         .then(data => {
-            updateState(data);
-            log(action === 'start' ? "Séquence initiée." : "Arrêt d'urgence envoyé.");
+            if (data.status === 'ERROR') {
+                log("Erreur: " + (data.message || "Inconnue"));
+                console.error("Server Error:", data);
+            } else {
+                updateState(data);
+                log(action === 'start' ? "Séquence initiée." : "Arrêt d'urgence envoyé.");
+            }
         })
-        .catch(err => log("Erreur communication serveur"));
+        .catch(err => {
+            console.error(err);
+            log("Erreur communication serveur");
+        });
 }
 
 function updateState(data) {
