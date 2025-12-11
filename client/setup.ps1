@@ -39,6 +39,54 @@ $RemoteUrl = "https://lgtw.tf/nop/server/control.php"
 $LocalSoundPath = "$env:APPDATA\LGTWPlayer\lycee-sonnerie.wav"
 $LogFile = "$env:APPDATA\LGTWPlayer\activity.log"
 
+# --- GLOBAL EMERGENCY STOP FLAG ---
+$script:EmergencyStop = $false
+
+# --- VOLUME CONTROL (Windows Audio API) ---
+$volumeControlCode = @"
+using System.Runtime.InteropServices;
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume {
+    int NotImpl1(); int NotImpl2();
+    int GetChannelCount(out int pnChannelCount);
+    int SetMasterVolumeLevel(float fLevelDB, System.Guid pguidEventContext);
+    int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);
+    int GetMasterVolumeLevel(out float pfLevelDB);
+    int GetMasterVolumeLevelScalar(out float pfLevel);
+    int SetChannelVolumeLevel(uint nChannel, float fLevelDB, System.Guid pguidEventContext);
+    int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, System.Guid pguidEventContext);
+    int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
+    int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
+    int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, System.Guid pguidEventContext);
+    int GetMute(out bool pbMute);
+}
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice {
+    int Activate(ref System.Guid iid, int dwClsCtx, System.IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+}
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator {
+    int NotImpl1();
+    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
+}
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
+public class Audio {
+    static IAudioEndpointVolume Vol() {
+        var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
+        IMMDevice dev = null;
+        Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out dev));
+        object aev = null;
+        System.Guid iid = typeof(IAudioEndpointVolume).GUID;
+        Marshal.ThrowExceptionForHR(dev.Activate(ref iid, 0, System.IntPtr.Zero, out aev));
+        return aev as IAudioEndpointVolume;
+    }
+    public static float GetVolume() { float v = -1; Marshal.ThrowExceptionForHR(Vol().GetMasterVolumeLevelScalar(out v)); return v; }
+    public static void SetVolume(float v) { Marshal.ThrowExceptionForHR(Vol().SetMasterVolumeLevelScalar(v, System.Guid.Empty)); }
+}
+"@
+
+Add-Type -TypeDefinition $volumeControlCode -ErrorAction SilentlyContinue
+
 # --- FONCTIONS ---
 
 function Write-Log ($Message) {
@@ -50,11 +98,18 @@ function Write-Log ($Message) {
 
 function Set-Volume ($Percent) {
     try {
-        $Audio = New-Object -ComObject WScript.Shell
-        # Note: Volume control requires additional COM objects or external tools
-        # Simplified implementation - does nothing on systems without proper audio COM
+        $Level = [Math]::Max(0, [Math]::Min(100, $Percent)) / 100.0
+        [Audio]::SetVolume($Level)
     } catch {
-        # Silent fail - volume control is optional
+        Write-Log "WARNING: Volume control failed - $($_.Exception.Message)"
+    }
+}
+
+function Get-Volume {
+    try {
+        return [Math]::Round([Audio]::GetVolume() * 100)
+    } catch {
+        return -1
     }
 }
 
@@ -73,8 +128,11 @@ $LastTarget = 0
 $HasPlayedForTarget = $false
 $LastVolume = -1
 $LastStatus = ""
+$LastSoundFile = ""
+$ServerVolume = 50
 
 while ($true) {
+    $script:EmergencyStop = $false
     try {
         $Time = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
         # Construction explicite de l'URI pour éviter les erreurs de parsing
@@ -114,17 +172,51 @@ while ($true) {
             continue
         }
 
-        # Log changement d'état global
+        # EMERGENCY STOP CHECK
+        if ($Response.status -eq 'IDLE' -and $LastStatus -eq 'ARMED') {
+            Write-Log "!!! EMERGENCY STOP TRIGGERED !!!"
+            $script:EmergencyStop = $true
+            $LastTarget = 0
+            $HasPlayedForTarget = $false
+        }
+
+        # Log state change + Volume control on ARMED transition
         if ($Response.status -ne $LastStatus) {
-            Write-Log "État Serveur: $LastStatus -> $($Response.status)"
+            Write-Log "Server State: $LastStatus -> $($Response.status)"
+            
+            # VOLUME CONTROL - Only adjust when entering ARMED state (sound about to play)
+            if ($Response.status -eq 'ARMED' -and $null -ne $Response.volume) {
+                $ServerVolume = [int]$Response.volume
+                $CurrentVol = Get-Volume
+                if ($CurrentVol -ge 0 -and [Math]::Abs($CurrentVol - $ServerVolume) -gt 2) {
+                    Write-Log "Volume adjustment: $CurrentVol% -> $ServerVolume% (sequence starting)"
+                    Set-Volume -Percent $ServerVolume
+                    $LastVolume = $ServerVolume
+                }
+            }
+            
             $LastStatus = $Response.status
         }
 
-        if ($null -ne $Response.volume) {
-            $Vol = [int]$Response.volume
-            if ($Vol -ne $LastVolume) {
-                Set-Volume -Percent $Vol
-                $LastVolume = $Vol
+        # DYNAMIC SOUND FILE CHANGE
+        if ($null -ne $Response.sound_file -and $Response.sound_file -ne "") {
+            $NewSoundFile = $Response.sound_file
+            if ($NewSoundFile -ne $LastSoundFile) {
+                Write-Log "New sound file detected: $NewSoundFile"
+                $LocalSoundPath = "$env:APPDATA\LGTWPlayer\$NewSoundFile"
+                
+                # Download if it's a URL
+                if ($NewSoundFile -match '^https?://') {
+                    try {
+                        Write-Log "Downloading sound file..."
+                        Invoke-WebRequest -Uri $NewSoundFile -OutFile $LocalSoundPath -TimeoutSec 30
+                        Write-Log "Sound file downloaded successfully"
+                    } catch {
+                        Write-Log "ERROR: Failed to download sound - $($_.Exception.Message)"
+                    }
+                }
+                
+                $LastSoundFile = $NewSoundFile
             }
         }
 
@@ -143,18 +235,69 @@ while ($true) {
             if ($SecondsRemaining -gt 0) {
                 Write-Host "Waiting... T-$SecondsRemaining s" -NoNewline -ForegroundColor Yellow
                 Write-Host "`r" -NoNewline
-                if ($SecondsRemaining -lt 2) { Start-Sleep -Milliseconds 200 } else { Start-Sleep -Seconds 1 }
+                
+                # SHORT SLEEP with emergency stop check
+                $SleepTime = if ($SecondsRemaining -lt 2) { 200 } else { 1000 }
+                Start-Sleep -Milliseconds $SleepTime
+                
+                # Quick status re-check for emergency stop
+                if ($SecondsRemaining -gt 2) {
+                    try {
+                        $QuickCheck = Invoke-WebRequest -Uri "$RemoteUrl?t=$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())" -TimeoutSec 2 -ErrorAction Stop
+                        $QuickJson = $QuickCheck.Content.Trim()
+                        if ($QuickJson -match '^"status"' -and $QuickJson -notmatch '^\{') { $QuickJson = "{" + $QuickJson }
+                        $QuickStatus = ($QuickJson | ConvertFrom-Json).status
+                        if ($QuickStatus -eq 'IDLE') {
+                            Write-Log "!!! EMERGENCY STOP during countdown !!!"
+                            $script:EmergencyStop = $true
+                        }
+                    } catch { }
+                }
             } else {
-                if (-not $HasPlayedForTarget) {
+                if (-not $HasPlayedForTarget -and -not $script:EmergencyStop) {
                     if ($SecondsRemaining -gt -30) {
                         Write-Log ">>> SYNCHRONIZED EXECUTION (Delta: $SecondsRemaining s) <<<"
                         
-                        # Play sound using .NET Media Player
+                        # Play sound with emergency stop capability
                         if (Test-Path $LocalSoundPath) {
                             try {
                                 $Player = New-Object System.Media.SoundPlayer
                                 $Player.SoundLocation = $LocalSoundPath
-                                $Player.PlaySync()
+                                
+                                # Play async to allow interruption
+                                $Player.Load()
+                                $Player.Play()
+                                
+                                # Monitor for emergency stop during playback
+                                $PlayStartTime = Get-Date
+                                $MaxPlayDuration = 300 # 5 minutes max
+                                
+                                while (((Get-Date) - $PlayStartTime).TotalSeconds -lt $MaxPlayDuration) {
+                                    Start-Sleep -Milliseconds 100
+                                    
+                                    # Check emergency stop every 100ms
+                                    if ($script:EmergencyStop) {
+                                        Write-Log "!!! PLAYBACK INTERRUPTED BY EMERGENCY STOP !!!"
+                                        $Player.Stop()
+                                        break
+                                    }
+                                    
+                                    # Periodic server check during long playback
+                                    if (((Get-Date) - $PlayStartTime).TotalSeconds % 2 -lt 0.1) {
+                                        try {
+                                            $CheckResp = Invoke-WebRequest -Uri "$RemoteUrl?t=$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())" -TimeoutSec 1 -ErrorAction Stop
+                                            $CheckJson = $CheckResp.Content.Trim()
+                                            if ($CheckJson -match '^"status"') { $CheckJson = "{" + $CheckJson }
+                                            if (($CheckJson | ConvertFrom-Json).status -eq 'IDLE') {
+                                                Write-Log "!!! EMERGENCY STOP during playback !!!"
+                                                $script:EmergencyStop = $true
+                                                $Player.Stop()
+                                                break
+                                            }
+                                        } catch { }
+                                    }
+                                }
+                                
                                 $Player.Dispose()
                             } catch {
                                 Write-Log "ERROR: Failed to play sound - $($_.Exception.Message)"
@@ -170,6 +313,9 @@ while ($true) {
                         Write-Log "Target ignored - too old ($SecondsRemaining s)"
                         $HasPlayedForTarget = $true
                     }
+                } elseif ($script:EmergencyStop) {
+                    Write-Log "Playback cancelled due to emergency stop"
+                    $HasPlayedForTarget = $true
                 }
             }
         } else {
@@ -212,9 +358,9 @@ Write-Host "Script player installé."
 # 4. Gestion du fichier Audio
 if (Test-Path $_SourceWav) {
     Copy-Item -Path $_SourceWav -Destination $DestWav -Force
-    Write-Host "Fichier son copié."
+    Write-Host "Sound file copied."
 } else {
-    Write-Warning "Fichier son non trouvé dans le dossier d'installation. Le player utilisera le beep système si nécessaire."
+    Write-Warning "Sound file not found. Player will use system beep."
 }
 
 # 5. Création du raccourci de démarrage
@@ -227,9 +373,9 @@ $Shortcut.Description = "LGTW Player Background Service"
 $Shortcut.Save()
 Write-Host "Démarrage automatique configuré."
 
-# 6. Lancement immédiat
-Write-Host "Lancement du service..."
+# 6. Lancement immediat
+Write-Host "Starting service..."
 Start-Process "powershell.exe" -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$DestScript`""
 
-Write-Host "INSTALLATION TERMINÉE AVEC SUCCÈS !" -ForegroundColor Green
+Write-Host "INSTALLATION COMPLETE!" -ForegroundColor Green
 Start-Sleep -Seconds 3

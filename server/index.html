@@ -40,6 +40,15 @@
                 <label id="volumeValue" style="width: 30px; text-align: right;">50</label>
             </div>
 
+            <div class="sound-selector">
+                <label for="soundSelect">FICHIER SON</label>
+                <select id="soundSelect">
+                    <option value="">Default (lycee-sonnerie.wav)</option>
+                    <option value="custom-alarm.wav">Alarme Custom</option>
+                    <option value="https://example.com/sound.wav">URL Personnalisée</option>
+                </select>
+            </div>
+
             <button id="btnArm" class="btn btn-arm">LANCER SÉQUENCE (15s)</button>
             <button id="btnStop" class="btn btn-stop">ARRÊT D'URGENCE</button>
         </div>

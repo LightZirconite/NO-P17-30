@@ -44,12 +44,14 @@ logDebug("Requete reçue. Action: " . ($action ? $action : 'read'));
 if ($action === 'start') {
     $targetTime = time() + 15;
     $volume = isset($_GET['volume']) ? intval($_GET['volume']) : 50;
+    $soundFile = isset($_GET['sound']) ? $_GET['sound'] : '';
     
     $data = [
         'status' => 'ARMED',
         'target_timestamp' => $targetTime,
         'server_time' => time(),
         'volume' => $volume,
+        'sound_file' => $soundFile,
         'message' => 'Lancement imminent !'
     ];
     
@@ -58,7 +60,7 @@ if ($action === 'start') {
         logDebug("ERREUR ECRITURE START");
         echo json_encode(['status' => 'ERROR', 'message' => 'Echec écriture fichier']);
     } else {
-        logDebug("START OK. Target: $targetTime");
+        logDebug("START OK. Target: $targetTime, Volume: $volume, Sound: $soundFile");
         echo $json;
     }
 
@@ -67,6 +69,8 @@ if ($action === 'start') {
         'status' => 'IDLE',
         'target_timestamp' => 0,
         'server_time' => time(),
+        'volume' => 50,
+        'sound_file' => '',
         'message' => 'En attente...'
     ];
     
@@ -83,7 +87,13 @@ if ($action === 'start') {
     // Si le JSON est corrompu ou invalide, on le recrée
     if (!$data || !isset($data['status'])) {
         logDebug("AVERTISSEMENT: state.json corrompu, recréation...");
-        $data = ['status' => 'IDLE', 'target_timestamp' => 0, 'message' => 'Reset après corruption'];
+        $data = [
+            'status' => 'IDLE', 
+            'target_timestamp' => 0,
+            'volume' => 50,
+            'sound_file' => '',
+            'message' => 'Reset après corruption'
+        ];
         file_put_contents($stateFile, json_encode($data));
     }
 
@@ -95,6 +105,8 @@ if ($action === 'start') {
                 'status' => 'IDLE',
                 'target_timestamp' => 0,
                 'server_time' => time(),
+                'volume' => 50,
+                'sound_file' => '',
                 'message' => 'Reset automatique post-event'
             ];
             file_put_contents($stateFile, json_encode($data));
@@ -103,6 +115,11 @@ if ($action === 'start') {
     
     // On ajoute toujours l'heure serveur fraîche pour la synchro
     $data['server_time'] = time();
+    
+    // Ensure volume and sound_file exist in response
+    if (!isset($data['volume'])) $data['volume'] = 50;
+    if (!isset($data['sound_file'])) $data['sound_file'] = '';
+    
     echo json_encode($data);
 }
 

@@ -13,6 +13,7 @@ const els = {
     overlay: document.getElementById('safetyOverlay'),
     volSlider: document.getElementById('volumeSlider'),
     volValue: document.getElementById('volumeValue'),
+    soundSelect: document.getElementById('soundSelect'),
     btnArm: document.getElementById('btnArm'),
     btnStop: document.getElementById('btnStop'),
     btnConfirm: document.getElementById('btnConfirm'),
@@ -45,12 +46,17 @@ function hideConfirm() { els.overlay.classList.remove('visible'); }
 
 function confirmLaunch() {
     hideConfirm();
-    sendAction('start', els.volSlider.value);
+    const volume = els.volSlider.value;
+    const soundFile = els.soundSelect.value;
+    sendAction('start', volume, soundFile);
 }
 
-function sendAction(action, volume = 50) {
+function sendAction(action, volume = 50, soundFile = '') {
     let url = `control.php?action=${action}&t=${Date.now()}`;
-    if (action === 'start') url += `&volume=${volume}`;
+    if (action === 'start') {
+        url += `&volume=${volume}`;
+        if (soundFile) url += `&sound=${encodeURIComponent(soundFile)}`;
+    }
 
     fetch(url)
         .then(res => res.json())
