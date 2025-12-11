@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LGTW Control Center</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background-color: #1e1e1e;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            width: 350px;
+            border: 1px solid #333;
+        }
+
+        h1 {
+            margin-bottom: 30px;
+            font-weight: 300;
+            letter-spacing: 2px;
+            color: #fff;
+        }
+
+        .control-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            color: #aaa;
+        }
+
+        input[type=range] {
+            width: 100%;
+            accent-color: #bb86fc;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .btn-go {
+            background: linear-gradient(45deg, #6200ea, #bb86fc);
+            color: white;
+            box-shadow: 0 4px 15px rgba(98, 0, 234, 0.4);
+        }
+
+        .btn-stop {
+            background-color: #cf6679;
+            color: #121212;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #2c2c2c;
+            font-family: monospace;
+            min-height: 20px;
+        }
+
+        /* Loader Animation */
+        .loader {
+            border: 3px solid #2c2c2c;
+            border-top: 3px solid #bb86fc;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 10px;
+            visibility: hidden;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .visible {
+            visibility: visible;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>LGTW COMMAND</h1>
+
+        <div class="control-group">
+            <label for="volume">Volume Cible: <span id="vol-val">50</span>%</label>
+            <input type="range" id="volume" min="0" max="100" value="50"
+                oninput="document.getElementById('vol-val').innerText = this.value">
+        </div>
+
+        <button class="btn-go" onclick="sendCommand('start')">
+            <div id="loader" class="loader"></div> INITIALISER (15s)
+        </button>
+
+        <button class="btn-stop" onclick="sendCommand('stop')">ARRÊT D'URGENCE</button>
+
+        <div id="status">Système prêt.</div>
+    </div>
+
+    <script>
+        function sendCommand(action) {
+            const loader = document.getElementById('loader');
+            const statusDiv = document.getElementById('status');
+            const volume = document.getElementById('volume').value;
+
+            loader.classList.add('visible');
+            statusDiv.innerText = "Transmission...";
+
+            // Ajout de Date.now() pour éviter le cache navigateur
+            let url = 'control.php?action=' + action + '&t=' + Date.now();
+            if (action === 'start') {
+                url += '&volume=' + volume;
+            }
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    setTimeout(() => { // Fake delay for "style"
+                        loader.classList.remove('visible');
+
+                        if (data.status === 'ERROR') {
+                            statusDiv.innerText = "ERREUR: " + data.message;
+                            statusDiv.style.color = "red";
+                        }
+                        else if (data.status === 'ARMED') {
+                            statusDiv.innerText = "ARMÉ - T-" + (data.target_timestamp - Math.floor(Date.now() / 1000)) + "s - Vol:" + data.volume + "%";
+                            statusDiv.style.color = "#bb86fc";
+                        } else {
+                            statusDiv.innerText = "SYSTÈME DÉSARMÉ";
+                            statusDiv.style.color = "#cf6679";
+                        }
+                    }, 500);
+                })
+                .catch(err => {
+                    loader.classList.remove('visible');
+                    statusDiv.innerText = "ERREUR DE LIAISON";
+                    statusDiv.style.color = "red";
+                    console.error(err);
+                });
+        }
+    </script>
+</body>
+
+</html>

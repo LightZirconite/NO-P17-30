@@ -1,0 +1,185 @@
+﻿# setup.ps1
+# Installateur LGTW Player V2 (Tout-en-un)
+
+$ErrorActionPreference = "Stop"
+
+# --- CONFIGURATION ---
+$InstallDir = "$env:APPDATA\LGTWPlayer"
+$DestScript = "$InstallDir\player.ps1"
+$DestWav = "$InstallDir\lycee-sonnerie.wav"
+$StartupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+$ShortcutPath = "$StartupDir\LGTWPlayer.lnk"
+$_SourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$_SourceWav = Join-Path $_SourceDir "lycee-sonnerie.wav"
+
+# --- CODE DU PLAYER (Intégré) ---
+$PlayerScriptContent = @'
+# client/player.ps1
+# Lecteur intelligent synchronisé
+# Version: 2.0 (Smart Sync)
+
+$ErrorActionPreference = "SilentlyContinue"
+
+# --- SINGLE INSTANCE CHECK ---
+$MutexName = "Global\LGTWPlayerMutex"
+try {
+    $Mutex = New-Object System.Threading.Mutex($false, $MutexName)
+    if (-not $Mutex.WaitOne(0, $false)) {
+        Write-Host "Une autre instance tourne déjà."
+        exit
+    }
+} catch {}
+
+# --- CONFIGURATION ---
+$RemoteUrl = "https://lgtw.tf/nop/server/control.php"
+$LocalSoundPath = "$env:APPDATA\LGTWPlayer\lycee-sonnerie.wav"
+$LogFile = "$env:APPDATA\LGTWPlayer\activity.log"
+
+# --- FONCTIONS ---
+
+function Write-Log ($Message) {
+    $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $Line = "[$TimeStamp] $Message"
+    try { Add-Content -Path $LogFile -Value $Line -Force } catch {}
+    Write-Host $Line
+}
+
+function Set-Volume ($Percent) {
+    try {
+        $WshShell = New-Object -ComObject WScript.Shell
+        1..50 | ForEach-Object { $WshShell.SendKeys([char]174) } # VolDown
+        $Steps = [math]::Ceiling($Percent / 2)
+        if ($Steps -gt 0) {
+            1..$Steps | ForEach-Object { $WshShell.SendKeys([char]175) } # VolUp
+        }
+    } catch {
+        Write-Log "Erreur volume: $_"
+    }
+}
+
+function Play-Sound {
+    param($Path)
+    if (Test-Path $Path) {
+        try {
+            $Player = New-Object System.Media.SoundPlayer
+            $Player.SoundLocation = $Path
+            $Player.Load()
+            $Player.Play()
+            Write-Log "SON JOUÉ !"
+        } catch {
+            Write-Log "ERREUR LECTURE: $_"
+            [console]::Beep(880, 1000)
+        }
+    } else {
+        Write-Log "Fichier son introuvable: $Path"
+        [console]::Beep(880, 1000)
+    }
+}
+
+# --- BOUCLE PRINCIPALE ---
+
+Write-Log "--- PLAYER DEMARRÉ (SMART SYNC) ---"
+
+$LastTarget = 0
+$HasPlayedForTarget = $false
+$LastVolume = -1
+
+while ($true) {
+    try {
+        $Time = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+        $Uri = "$RemoteUrl?t=$Time"
+        $Response = Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 5 -ErrorAction Stop
+        
+        if ($null -ne $Response.volume) {
+            $Vol = [int]$Response.volume
+            if ($Vol -ne $LastVolume) {
+                Set-Volume -Percent $Vol
+                $LastVolume = $Vol
+            }
+        }
+
+        if ($Response.status -eq 'ARMED') {
+            $ServerTime = [int64]$Response.server_time
+            $TargetTime = [int64]$Response.target_timestamp
+            
+            if ($TargetTime -ne $LastTarget) {
+                $LastTarget = $TargetTime
+                $HasPlayedForTarget = $false
+                Write-Log "Nouvelle cible reçue: $TargetTime (Serveur: $ServerTime)"
+            }
+
+            $SecondsRemaining = $TargetTime - $ServerTime
+
+            if ($SecondsRemaining -gt 0) {
+                Write-Host "Attente... T-$SecondsRemaining s" -NoNewline -ForegroundColor Yellow
+                Write-Host "`r" -NoNewline
+                if ($SecondsRemaining -lt 2) { Start-Sleep -Milliseconds 200 } else { Start-Sleep -Seconds 1 }
+            } else {
+                if (-not $HasPlayedForTarget) {
+                    if ($SecondsRemaining -gt -30) {
+                        Write-Log ">>> EXECUTION SYNCHRONISÉE (Delta: $SecondsRemaining s) <<<"
+                        Play-Sound -Path $LocalSoundPath
+                        $HasPlayedForTarget = $true
+                    } else {
+                        Write-Log "Cible ignorée car trop ancienne ($SecondsRemaining s)"
+                        $HasPlayedForTarget = $true
+                    }
+                }
+            }
+        } else {
+            if ($LastTarget -ne 0) {
+                Write-Log "Serveur en attente (IDLE)."
+                $LastTarget = 0
+                $HasPlayedForTarget = $false
+            }
+            Start-Sleep -Seconds 1
+        }
+    } catch {
+        Write-Host "." -NoNewline
+        Start-Sleep -Seconds 2
+    }
+}
+'@
+
+Write-Host "--- INSTALLATION LGTW PLAYER ---" -ForegroundColor Cyan
+
+# 1. Arrêt des anciennes instances
+Write-Host "Arrêt des processus existants..."
+Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*player.ps1*" } | ForEach-Object {
+    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+}
+
+# 2. Création du dossier
+if (-not (Test-Path $InstallDir)) {
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    Write-Host "Dossier créé: $InstallDir"
+}
+
+# 3. Écriture du script Player
+Set-Content -Path $DestScript -Value $PlayerScriptContent -Encoding UTF8
+Write-Host "Script player installé."
+
+# 4. Gestion du fichier Audio
+if (Test-Path $_SourceWav) {
+    Copy-Item -Path $_SourceWav -Destination $DestWav -Force
+    Write-Host "Fichier son copié."
+} else {
+    Write-Warning "Fichier son non trouvé dans le dossier d'installation. Le player utilisera le beep système si nécessaire."
+}
+
+# 5. Création du raccourci de démarrage
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
+$Shortcut.TargetPath = "powershell.exe"
+$Shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$DestScript`""
+$Shortcut.WorkingDirectory = $InstallDir
+$Shortcut.Description = "LGTW Player Background Service"
+$Shortcut.Save()
+Write-Host "Démarrage automatique configuré."
+
+# 6. Lancement immédiat
+Write-Host "Lancement du service..."
+Start-Process "powershell.exe" -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$DestScript`""
+
+Write-Host "INSTALLATION TERMINÉE AVEC SUCCÈS !" -ForegroundColor Green
+Start-Sleep -Seconds 3
