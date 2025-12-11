@@ -75,6 +75,10 @@ while ($true) {
         # --- FIX: Gestion robuste de la réponse ---
         # Si le serveur renvoie une chaîne (ex: mauvais Content-Type), on tente de parser
         if ($Response -is [string]) {
+            # Nettoyage du BOM (ï»¿) causé par l'encodage du fichier PHP
+            if ($Response.StartsWith("ï»¿")) { $Response = $Response.Substring(3) }
+            if ($Response.StartsWith([char]0xFEFF)) { $Response = $Response.Substring(1) }
+
             try {
                 $Response = $Response | ConvertFrom-Json
             } catch {
