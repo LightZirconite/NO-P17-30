@@ -264,41 +264,12 @@ while ($true) {
                                 $Player = New-Object System.Media.SoundPlayer
                                 $Player.SoundLocation = $LocalSoundPath
                                 
-                                # Play async to allow interruption
+                                # Play async (non-blocking)
                                 $Player.Load()
-                                $Player.Play()
-                                
-                                # Monitor for emergency stop during playback
-                                $PlayStartTime = Get-Date
-                                $MaxPlayDuration = 300 # 5 minutes max
-                                
-                                while (((Get-Date) - $PlayStartTime).TotalSeconds -lt $MaxPlayDuration) {
-                                    Start-Sleep -Milliseconds 100
-                                    
-                                    # Check emergency stop every 100ms
-                                    if ($script:EmergencyStop) {
-                                        Write-Log "!!! PLAYBACK INTERRUPTED BY EMERGENCY STOP !!!"
-                                        $Player.Stop()
-                                        break
-                                    }
-                                    
-                                    # Periodic server check during long playback
-                                    if (((Get-Date) - $PlayStartTime).TotalSeconds % 2 -lt 0.1) {
-                                        try {
-                                            $CheckResp = Invoke-WebRequest -Uri "$RemoteUrl?t=$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())" -TimeoutSec 1 -ErrorAction Stop
-                                            $CheckJson = $CheckResp.Content.Trim()
-                                            if ($CheckJson -match '^"status"') { $CheckJson = "{" + $CheckJson }
-                                            if (($CheckJson | ConvertFrom-Json).status -eq 'IDLE') {
-                                                Write-Log "!!! EMERGENCY STOP during playback !!!"
-                                                $script:EmergencyStop = $true
-                                                $Player.Stop()
-                                                break
-                                            }
-                                        } catch { }
-                                    }
-                                }
-                                
+                                $Player.PlaySync()  # Plays synchronously but releases immediately after
                                 $Player.Dispose()
+                                
+                                Write-Log "Sound playback completed"
                             } catch {
                                 Write-Log "ERROR: Failed to play sound - $($_.Exception.Message)"
                                 [Console]::Beep(800, 500)
