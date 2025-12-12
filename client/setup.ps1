@@ -467,16 +467,28 @@ Write-Host "Script player installé."
 # 3.b Copy installer to install dir so it can run/update itself at startup
 try {
     if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
-    Copy-Item -Path $MyInvocation.MyCommand.Path -Destination $InstalledSetupPath -Force
-    Write-Host "Installer copy placed at $InstalledSetupPath"
+    if ($MyInvocation.MyCommand.Path -ne $InstalledSetupPath) {
+        Copy-Item -Path $MyInvocation.MyCommand.Path -Destination $InstalledSetupPath -Force
+        Write-Host "Installer copy placed at $InstalledSetupPath"
+    } else {
+        Write-Host "Installer already in place ($InstalledSetupPath)."
+    }
 } catch {
     Write-Warning "Could not copy installer to ${InstalledSetupPath}: $($_.Exception.Message)"
 }
 
 # 4. Gestion du fichier Audio
 if (Test-Path $_SourceWav) {
-    Copy-Item -Path $_SourceWav -Destination $DestWav -Force
-    Write-Host "Sound file copied."
+    $SourceFull = (Get-Item -LiteralPath $_SourceWav -ErrorAction SilentlyContinue).FullName
+    $DestFull = (Get-Item -LiteralPath $DestWav -ErrorAction SilentlyContinue).FullName
+    if (-not $SourceFull) { $SourceFull = $_SourceWav }
+    if (-not $DestFull) { $DestFull = $DestWav }
+    if ($SourceFull -ne $DestFull) {
+        Copy-Item -LiteralPath $_SourceWav -Destination $DestWav -Force
+        Write-Host "Sound file copied."
+    } else {
+        Write-Host "Sound file already at destination, skipping copy."
+    }
 } else {
     Write-Warning "Sound file not found. Player will use system beep."
 }
