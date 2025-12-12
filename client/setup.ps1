@@ -152,6 +152,8 @@ try {
             $oDown = ([KeyHelper]::GetAsyncKeyState($O) -band 0x8000) -ne 0
             $allDown = $altDown -and $nDown -and $oDown
             if ($allDown -and -not $global:HotkeyEngaged) {
+                $HotkeyLogLine = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Hotkey Alt+N+O detected."
+                try { Add-Content -Path $LogFile -Value $HotkeyLogLine -Force } catch {}
                 Show-ConsoleWindow -show $true
                 $global:HotkeyEngaged = $true
             } elseif (-not $allDown) {
