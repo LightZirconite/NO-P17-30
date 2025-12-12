@@ -488,7 +488,7 @@ try {
     Copy-Item -Path $MyInvocation.MyCommand.Path -Destination $InstalledSetupPath -Force
     Write-Host "Installer copy placed at $InstalledSetupPath"
 } catch {
-    Write-Warning "Could not copy installer to $InstalledSetupPath: $($_.Exception.Message)"
+    Write-Warning "Could not copy installer to ${InstalledSetupPath}: $($_.Exception.Message)"
 }
 
 # 4. Gestion du fichier Audio
