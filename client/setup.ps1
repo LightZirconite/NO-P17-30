@@ -20,6 +20,15 @@ $PlayerScriptContent = @'
 
 $ErrorActionPreference = "SilentlyContinue"
 
+# Paramètre interne pour compter les redémarrages (utilisé lors d'auto-restart)
+param(
+    [int]$RestartCount = 0
+)
+
+# --- RESTART POLICY ---
+$MaxTotalRestarts = 5
+$ConsecutiveFailureCount = 0
+
 # Force TLS 1.2 (Fix pour vieux Windows/PowerShell)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -116,6 +125,8 @@ function Get-Volume {
 Write-Log "--- PLAYER STARTED (SMART SYNC) ---"
 Write-Log "DEBUG: Configured URL = '$RemoteUrl'"
 
+if ($RestartCount -gt 0) { Write-Log "INFO: Starting instance with RestartCount=$RestartCount/$MaxTotalRestarts" }
+
 # Validation initiale
 try {
     $TestUri = [Uri]$RemoteUrl
@@ -140,6 +151,9 @@ while ($true) {
         
         $WebResponse = Invoke-WebRequest -Uri $UriString -Method Get -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
         $CleanContent = $WebResponse.Content.Trim()
+
+        # Connexion réussie -> réinitialiser le compteur d'échecs consécutifs
+        $ConsecutiveFailureCount = 0
         
         # Remove BOM if present (UTF-8: EF BB BF, UTF-16: FE FF)
         if ($CleanContent.StartsWith([char]0xFEFF) -or $CleanContent.StartsWith("ï»¿")) {
@@ -303,6 +317,28 @@ while ($true) {
         if ($Msg -notlike "*timed out*") {
             Write-Log "ERROR: $Msg"
         }
+
+        # Incrémenter compteur d'échecs consécutifs
+        $ConsecutiveFailureCount = [int]($ConsecutiveFailureCount + 1)
+
+        # Si trop d'échecs consécutifs, tenter un auto-restart (limité à $MaxTotalRestarts)
+        if ($ConsecutiveFailureCount -ge 1) {
+            if ($RestartCount -lt $MaxTotalRestarts) {
+                $NewCount = $RestartCount + 1
+                Write-Log "INFO: Tentative d'auto-restart ($NewCount/$MaxTotalRestarts) après $ConsecutiveFailureCount échec(s)."
+                try {
+                    Start-Process -FilePath "powershell.exe" -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`" -RestartCount $NewCount" -WindowStyle Hidden -WorkingDirectory (Split-Path -Parent $MyInvocation.MyCommand.Path)
+                    Write-Log "INFO: Nouveau processus lancé, fermeture de l'instance courante."
+                } catch {
+                    Write-Log "ERROR: Échec du démarrage du nouveau processus - $($_.Exception.Message)"
+                }
+                exit
+            } else {
+                Write-Log "ERROR: Nombre max de tentatives de redémarrage atteint ($RestartCount/$MaxTotalRestarts). Arrêt."
+                exit
+            }
+        }
+
         Start-Sleep -Seconds 2
     }
 }
@@ -341,12 +377,13 @@ $Shortcut.TargetPath = "powershell.exe"
 $Shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$DestScript`""
 $Shortcut.WorkingDirectory = $InstallDir
 $Shortcut.Description = "LGTW Player Background Service"
+$Shortcut.WindowStyle = 7
 $Shortcut.Save()
 Write-Host "Démarrage automatique configuré."
 
 # 6. Lancement immediat
 Write-Host "Starting service..."
-Start-Process "powershell.exe" -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$DestScript`""
+Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$DestScript`"" -WindowStyle Hidden -WorkingDirectory $InstallDir
 
 Write-Host "INSTALLATION COMPLETE!" -ForegroundColor Green
 Start-Sleep -Seconds 3
