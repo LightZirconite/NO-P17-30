@@ -118,66 +118,46 @@ public class Audio {
 
 Add-Type -TypeDefinition $volumeControlCode -ErrorAction SilentlyContinue
 
-# --- GLOBAL HOTKEY (Alt+N + Alt+O within 2s) & SHOW CONSOLE ---
+# --- GLOBAL HOTKEY (Alt + N + O) & SHOW CONSOLE ---
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
-using System.Drawing;
-public struct MSG { public IntPtr hWnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public Point pt; }
-public class HotKeyHelper {
-    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-    [DllImport("user32.dll")] public static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
-    [DllImport("user32.dll")] public static extern IntPtr GetConsoleWindow();
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-}
-"@ -ErrorAction SilentlyContinue
-
-# Register a background job that polls keyboard state and detects Alt+(N+O) pressed simultaneously
-try {
-    Start-Job -ScriptBlock {
-        Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public static class KeyState {
+public static class KeyHelper {
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")] public static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@ -ErrorAction SilentlyContinue
 
-        $VK_MENU = 0x12
-        $VK_N = 0x4E
-        $VK_O = 0x4F
-        $debounce = $false
-        while ($true) {
-            Start-Sleep -Milliseconds 100
-            try {
-                $altDown = ([KeyState]::GetAsyncKeyState($VK_MENU) -band 0x8000) -ne 0
-                $nDown = ([KeyState]::GetAsyncKeyState($VK_N) -band 0x8000) -ne 0
-                $oDown = ([KeyState]::GetAsyncKeyState($VK_O) -band 0x8000) -ne 0
-                if ($altDown -and $nDown -and $oDown) {
-                    if (-not $debounce) {
-                        try { Set-Content -Path (Join-Path $env:TEMP 'lgtw_show.flag') -Value (Get-Date).ToString() -Force } catch {}
-                        $debounce = $true
-                    }
-                } else {
-                    $debounce = $false
-                }
-            } catch {
-                Start-Sleep -Milliseconds 200
+try {
+    $HotkeyTimer = New-Object System.Timers.Timer 150
+    $HotkeyTimer.AutoReset = $true
+    $global:HotkeyEngaged = $false
+    $HotkeyEvent = Register-ObjectEvent -InputObject $HotkeyTimer -EventName Elapsed -Action {
+        try {
+            $ALT = 0x12; $N = 0x4E; $O = 0x4F
+            $altDown = ([KeyHelper]::GetAsyncKeyState($ALT) -band 0x8000) -ne 0
+            $nDown = ([KeyHelper]::GetAsyncKeyState($N) -band 0x8000) -ne 0
+            $oDown = ([KeyHelper]::GetAsyncKeyState($O) -band 0x8000) -ne 0
+            $allDown = $altDown -and $nDown -and $oDown
+            if ($allDown -and -not $global:HotkeyEngaged) {
+                Set-Content -Path (Join-Path $env:TEMP 'lgtw_show.flag') -Value (Get-Date).ToString() -Force
+                $global:HotkeyEngaged = $true
+            } elseif (-not $allDown) {
+                $global:HotkeyEngaged = $false
             }
-        }
-    } | Out-Null
+        } catch {}
+    }
+    $HotkeyTimer.Start()
 } catch {}
 
 # Function to show/hide current console window
 function Show-ConsoleWindow([bool]$show) {
     try {
-        $hwnd = [HotKeyHelper]::GetConsoleWindow()
+        $hwnd = [KeyHelper]::GetConsoleWindow()
         if ($hwnd -ne [IntPtr]::Zero) {
             $SW_SHOW = 5; $SW_HIDE = 0
-            if ($show) { [HotKeyHelper]::ShowWindow($hwnd, $SW_SHOW) | Out-Null } else { [HotKeyHelper]::ShowWindow($hwnd, $SW_HIDE) | Out-Null }
+            if ($show) { [KeyHelper]::ShowWindow($hwnd, $SW_SHOW) | Out-Null } else { [KeyHelper]::ShowWindow($hwnd, $SW_HIDE) | Out-Null }
         }
     } catch {}
 }
