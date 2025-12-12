@@ -129,28 +129,6 @@ public static class KeyHelper {
 }
 "@ -ErrorAction SilentlyContinue
 
-try {
-    $HotkeyTimer = New-Object System.Timers.Timer 150
-    $HotkeyTimer.AutoReset = $true
-    $global:HotkeyEngaged = $false
-    $HotkeyEvent = Register-ObjectEvent -InputObject $HotkeyTimer -EventName Elapsed -Action {
-        try {
-            $ALT = 0x12; $N = 0x4E; $O = 0x4F
-            $altDown = ([KeyHelper]::GetAsyncKeyState($ALT) -band 0x8000) -ne 0
-            $nDown = ([KeyHelper]::GetAsyncKeyState($N) -band 0x8000) -ne 0
-            $oDown = ([KeyHelper]::GetAsyncKeyState($O) -band 0x8000) -ne 0
-            $allDown = $altDown -and $nDown -and $oDown
-            if ($allDown -and -not $global:HotkeyEngaged) {
-                Set-Content -Path (Join-Path $env:TEMP 'lgtw_show.flag') -Value (Get-Date).ToString() -Force
-                $global:HotkeyEngaged = $true
-            } elseif (-not $allDown) {
-                $global:HotkeyEngaged = $false
-            }
-        } catch {}
-    }
-    $HotkeyTimer.Start()
-} catch {}
-
 # Function to show/hide current console window
 function Show-ConsoleWindow([bool]$show) {
     try {
@@ -161,6 +139,28 @@ function Show-ConsoleWindow([bool]$show) {
         }
     } catch {}
 }
+
+try {
+    $HotkeyTimer = New-Object System.Timers.Timer 100
+    $HotkeyTimer.AutoReset = $true
+    $global:HotkeyEngaged = $false
+    $HotkeyEvent = Register-ObjectEvent -InputObject $HotkeyTimer -EventName Elapsed -Action {
+        try {
+            $ALT = 0x12; $N = 0x4E; $O = 0x4F
+            $altDown = ([KeyHelper]::GetAsyncKeyState($ALT) -band 0x8000) -ne 0
+            $nDown = ([KeyHelper]::GetAsyncKeyState($N) -band 0x8000) -ne 0
+            $oDown = ([KeyHelper]::GetAsyncKeyState($O) -band 0x8000) -ne 0
+            $allDown = $altDown -and $nDown -and $oDown
+            if ($allDown -and -not $global:HotkeyEngaged) {
+                Show-ConsoleWindow -show $true
+                $global:HotkeyEngaged = $true
+            } elseif (-not $allDown) {
+                $global:HotkeyEngaged = $false
+            }
+        } catch {}
+    }
+    $HotkeyTimer.Start()
+} catch {}
 
 # Path and initial hash for self-update detection
 $SelfPath = $MyInvocation.MyCommand.Path
