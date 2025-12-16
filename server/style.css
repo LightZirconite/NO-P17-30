@@ -140,6 +140,52 @@ body {
     width: 60px;
 }
 
+.background-control {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    background: #222;
+    padding: 15px;
+    border-radius: 12px;
+}
+
+.background-control label {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    min-width: 100px;
+}
+
+.background-control input[type=text] {
+    flex: 1;
+    background: #333;
+    color: var(--text-primary);
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 0.9rem;
+    outline: none;
+}
+
+.background-control input[type=text]:focus {
+    border-color: var(--accent-color);
+}
+
+.btn-background {
+    background: #333;
+    color: var(--accent-color);
+    padding: 10px 20px;
+    border: 1px solid var(--accent-color);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-background:hover {
+    background: var(--accent-color);
+    color: #000;
+}
+
 .sound-selector {
     display: flex;
     align-items: center;

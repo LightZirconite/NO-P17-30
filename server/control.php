@@ -46,12 +46,17 @@ if ($action === 'start') {
     $volume = isset($_GET['volume']) ? intval($_GET['volume']) : 50;
     $soundFile = isset($_GET['sound']) ? $_GET['sound'] : '';
     
+    // Preserve existing background if present
+    $currentState = @json_decode(file_get_contents($stateFile), true);
+    $background = isset($currentState['background']) ? $currentState['background'] : '';
+    
     $data = [
         'status' => 'ARMED',
         'target_timestamp' => $targetTime,
         'server_time' => time(),
         'volume' => $volume,
         'sound_file' => $soundFile,
+        'background' => $background,
         'message' => 'Lancement imminent !'
     ];
     
@@ -65,12 +70,17 @@ if ($action === 'start') {
     }
 
 } elseif ($action === 'stop') {
+    // Preserve existing background if present
+    $currentState = @json_decode(file_get_contents($stateFile), true);
+    $background = isset($currentState['background']) ? $currentState['background'] : '';
+    
     $data = [
         'status' => 'IDLE',
         'target_timestamp' => 0,
         'server_time' => time(),
         'volume' => 50,
         'sound_file' => '',
+        'background' => $background,
         'message' => 'En attente...'
     ];
     
@@ -78,6 +88,32 @@ if ($action === 'start') {
     file_put_contents($stateFile, $json);
     logDebug("STOP OK");
     echo $json;
+
+} elseif ($action === 'set_background') {
+    $background = isset($_GET['background']) ? $_GET['background'] : '';
+    
+    // Read current state to preserve other settings
+    $currentState = @json_decode(file_get_contents($stateFile), true);
+    if (!$currentState || !isset($currentState['status'])) {
+        $currentState = [
+            'status' => 'IDLE',
+            'target_timestamp' => 0,
+            'volume' => 50,
+            'sound_file' => ''
+        ];
+    }
+    
+    $currentState['background'] = $background;
+    $currentState['server_time'] = time();
+    
+    $json = json_encode($currentState);
+    if (file_put_contents($stateFile, $json) === false) {
+        logDebug("ERREUR ECRITURE SET_BACKGROUND");
+        echo json_encode(['status' => 'ERROR', 'message' => 'Echec écriture fichier']);
+    } else {
+        logDebug("SET_BACKGROUND OK: $background");
+        echo $json;
+    }
 
 } else {
     // Lecture simple avec Auto-Reset
@@ -116,9 +152,10 @@ if ($action === 'start') {
     // On ajoute toujours l'heure serveur fraîche pour la synchro
     $data['server_time'] = time();
     
-    // Ensure volume and sound_file exist in response
+    // Ensure volume, sound_file and background exist in response
     if (!isset($data['volume'])) $data['volume'] = 50;
     if (!isset($data['sound_file'])) $data['sound_file'] = '';
+    if (!isset($data['background'])) $data['background'] = '';
     
     echo json_encode($data);
 }

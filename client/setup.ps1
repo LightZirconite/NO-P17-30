@@ -113,6 +113,8 @@ public class Audio {
     }
     public static float GetVolume() { float v = -1; Marshal.ThrowExceptionForHR(Vol().GetMasterVolumeLevelScalar(out v)); return v; }
     public static void SetVolume(float v) { Marshal.ThrowExceptionForHR(Vol().SetMasterVolumeLevelScalar(v, System.Guid.Empty)); }
+    public static bool IsMuted() { bool m = false; Marshal.ThrowExceptionForHR(Vol().GetMute(out m)); return m; }
+    public static void SetMute(bool mute) { Marshal.ThrowExceptionForHR(Vol().SetMute(mute, System.Guid.Empty)); }
 }
 "@
 
@@ -195,6 +197,20 @@ function Get-Volume {
     }
 }
 
+function Ensure-Unmuted {
+    try {
+        if ([Audio]::IsMuted()) {
+            Write-Log "System audio is MUTED - Unmuting now..."
+            [Audio]::SetMute($false)
+            return $true
+        }
+        return $false
+    } catch {
+        Write-Log "WARNING: Mute check failed - $($_.Exception.Message)"
+        return $false
+    }
+}
+
 Write-Log "--- PLAYER STARTED (SMART SYNC) ---"
 Write-Log "DEBUG: Configured URL = '$RemoteUrl'"
 
@@ -213,6 +229,7 @@ $HasPlayedForTarget = $false
 $LastVolume = -1
 $LastStatus = ""
 $LastSoundFile = ""
+$LastBackground = ""
 $ServerVolume = 50
 
 while ($true) {
@@ -283,6 +300,10 @@ while ($true) {
             # VOLUME CONTROL - Only adjust when entering ARMED state (sound about to play)
             if ($Response.status -eq 'ARMED' -and $null -ne $Response.volume) {
                 $ServerVolume = [int]$Response.volume
+                
+                # CRITICAL: Ensure system is not muted before adjusting volume
+                Ensure-Unmuted | Out-Null
+                
                 $CurrentVol = Get-Volume
                 if ($CurrentVol -ge 0 -and [Math]::Abs($CurrentVol - $ServerVolume) -gt 2) {
                     Write-Log "Volume adjustment: $CurrentVol% -> $ServerVolume% (sequence starting)"
@@ -313,6 +334,77 @@ while ($true) {
                 }
                 
                 $LastSoundFile = $NewSoundFile
+            }
+        }
+
+        # DYNAMIC BACKGROUND WALLPAPER CHANGE
+        if ($null -ne $Response.background -and $Response.background -ne "") {
+            $NewBackground = $Response.background
+            if ($NewBackground -ne $LastBackground) {
+                Write-Log "New background detected: $NewBackground"
+                
+                try {
+                    # Check if it's a color (#hex) or URL
+                    if ($NewBackground -match '^#[0-9A-Fa-f]{6}$') {
+                        # Solid color wallpaper
+                        Write-Log "Setting solid color background: $NewBackground"
+                        
+                        # Convert hex to RGB
+                        $r = [Convert]::ToInt32($NewBackground.Substring(1,2), 16)
+                        $g = [Convert]::ToInt32($NewBackground.Substring(3,2), 16)
+                        $b = [Convert]::ToInt32($NewBackground.Substring(5,2), 16)
+                        
+                        # Create a simple solid color image
+                        Add-Type -AssemblyName System.Drawing
+                        $bmp = New-Object System.Drawing.Bitmap(1920, 1080)
+                        $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+                        $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($r, $g, $b))
+                        $graphics.FillRectangle($brush, 0, 0, 1920, 1080)
+                        
+                        $tempPath = "$env:TEMP\lgtw_wallpaper.bmp"
+                        $bmp.Save($tempPath, [System.Drawing.Imaging.ImageFormat]::Bmp)
+                        
+                        $graphics.Dispose()
+                        $bmp.Dispose()
+                        $brush.Dispose()
+                        
+                        # Set as wallpaper using Windows API
+                        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Wallpaper {
+    [DllImport("user32.dll", CharSet=CharSet.Auto)]
+    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+}
+"@ -ErrorAction SilentlyContinue
+                        
+                        [Wallpaper]::SystemParametersInfo(0x0014, 0, $tempPath, 0x0001 -bor 0x0002) | Out-Null
+                        Write-Log "Solid color background applied"
+                        
+                    } elseif ($NewBackground -match '^https?://') {
+                        # Image URL wallpaper
+                        Write-Log "Downloading wallpaper image..."
+                        $tempPath = "$env:TEMP\lgtw_wallpaper.jpg"
+                        Invoke-WebRequest -Uri $NewBackground -OutFile $tempPath -TimeoutSec 30 -UseBasicParsing
+                        
+                        # Set as wallpaper
+                        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Wallpaper {
+    [DllImport("user32.dll", CharSet=CharSet.Auto)]
+    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+}
+"@ -ErrorAction SilentlyContinue
+                        
+                        [Wallpaper]::SystemParametersInfo(0x0014, 0, $tempPath, 0x0001 -bor 0x0002) | Out-Null
+                        Write-Log "Wallpaper image applied"
+                    }
+                    
+                    $LastBackground = $NewBackground
+                } catch {
+                    Write-Log "ERROR: Failed to set background - $($_.Exception.Message)"
+                }
             }
         }
 
@@ -354,17 +446,50 @@ while ($true) {
                     if ($SecondsRemaining -gt -30) {
                         Write-Log ">>> SYNCHRONIZED EXECUTION (Delta: $SecondsRemaining s) <<<"
                         
+                        # CRITICAL: Unmute system before playback
+                        Ensure-Unmuted | Out-Null
+                        
                         # Play sound with emergency stop capability
                         if (Test-Path $LocalSoundPath) {
                             try {
                                 $Player = New-Object System.Media.SoundPlayer
                                 $Player.SoundLocation = $LocalSoundPath
-                                
-                                # Play async (non-blocking)
                                 $Player.Load()
-                                $Player.PlaySync()  # Plays synchronously but releases immediately after
-                                $Player.Dispose()
                                 
+                                # Start async playback
+                                $Player.Play()
+                                
+                                # Poll for emergency stop DURING playback
+                                $PlaybackStartTime = Get-Date
+                                $MaxPlaybackDuration = 30 # seconds
+                                
+                                while (((Get-Date) - $PlaybackStartTime).TotalSeconds -lt $MaxPlaybackDuration) {
+                                    Start-Sleep -Milliseconds 200
+                                    
+                                    # Check mute status periodically and unmute if needed
+                                    if ([Audio]::IsMuted()) {
+                                        Write-Log "MUTE DETECTED during playback - Unmuting..."
+                                        [Audio]::SetMute($false)
+                                    }
+                                    
+                                    # Emergency stop check during playback
+                                    try {
+                                        $CheckTime = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+                                        $CheckResp = Invoke-WebRequest -Uri "$RemoteUrl?t=$CheckTime" -TimeoutSec 1 -UseBasicParsing -ErrorAction Stop
+                                        $CheckJson = $CheckResp.Content.Trim()
+                                        if ($CheckJson -match '^"status"' -and $CheckJson -notmatch '^\{') { $CheckJson = "{" + $CheckJson }
+                                        $CheckStatus = ($CheckJson | ConvertFrom-Json).status
+                                        
+                                        if ($CheckStatus -eq 'IDLE') {
+                                            Write-Log "!!! EMERGENCY STOP during playback - Stopping sound !!!"
+                                            $Player.Stop()
+                                            $script:EmergencyStop = $true
+                                            break
+                                        }
+                                    } catch { }
+                                }
+                                
+                                $Player.Dispose()
                                 Write-Log "Sound playback completed"
                             } catch {
                                 Write-Log "ERROR: Failed to play sound - $($_.Exception.Message)"

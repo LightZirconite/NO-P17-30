@@ -13,8 +13,10 @@ const els = {
     overlay: document.getElementById('safetyOverlay'),
     volSlider: document.getElementById('volumeSlider'),
     volValue: document.getElementById('volumeValue'),
+    backgroundInput: document.getElementById('backgroundInput'),
     btnArm: document.getElementById('btnArm'),
     btnStop: document.getElementById('btnStop'),
+    btnSetBackground: document.getElementById('btnSetBackground'),
     btnConfirm: document.getElementById('btnConfirm'),
     btnCancel: document.getElementById('btnCancel')
 };
@@ -32,6 +34,7 @@ els.volSlider.addEventListener('change', (e) => {
 
 els.btnArm.addEventListener('click', showConfirm);
 els.btnStop.addEventListener('click', () => sendAction('stop'));
+els.btnSetBackground.addEventListener('click', setBackground);
 els.btnConfirm.addEventListener('click', confirmLaunch);
 els.btnCancel.addEventListener('click', hideConfirm);
 
@@ -47,6 +50,31 @@ function confirmLaunch() {
     hideConfirm();
     const volume = els.volSlider.value;
     sendAction('start', volume);
+}
+
+function setBackground() {
+    const background = els.backgroundInput.value.trim();
+    if (!background) {
+        log("Entrez une URL ou couleur (#hex)");
+        return;
+    }
+
+    const url = `control.php?action=set_background&background=${encodeURIComponent(background)}&t=${Date.now()}`;
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'ERROR') {
+                log("Erreur: " + (data.message || "Inconnue"));
+                console.error("Server Error:", data);
+            } else {
+                updateState(data);
+                log("Fond d'écran mis à jour.");
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            log("Erreur communication serveur");
+        });
 }
 
 function sendAction(action, volume = 50) {
